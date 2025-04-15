@@ -1,0 +1,27 @@
+.user-dashboard-container {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    min-height: 100vh;
+    background: #f8fafc;
+}
+
+.user-sidebar {
+    background: #1e40af;
+    color: white;
+    padding: 1.5rem;
+}
+
+.user-badge {
+    background: #3b82f6;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+.appointment-card {
+    background: white;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}

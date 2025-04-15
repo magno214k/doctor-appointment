@@ -1,0 +1,27 @@
+.doctor-dashboard-container {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    min-height: 100vh;
+    background: #f0fdf4;
+}
+
+.doctor-sidebar {
+    background: #047857;
+    color: white;
+    padding: 1.5rem;
+}
+
+.doctor-badge {
+    background: #10b981;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+.time-slot {
+    background: white;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-left: 4px solid #10b981;
+    border-radius: 4px;
+}

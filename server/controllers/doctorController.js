@@ -1,84 +1,111 @@
 const Doctor = require("../models/Doctor");
 const User = require("../models/User");
+const Appointment = require("../models/Appointment");
+const Prescription = require("../models/Prescription");
 const AppError = require("../utils/appError");
 const catchAsync = require("../utils/catchAsync");
+const APIFeatures = require("../utils/apiFeatures");
 
-exports.getAllDoctors = catchAsync(async (req, res, next) => {
-  const { department, page = 1, limit = 10 } = req.query;
+// Existing methods remain the same until here...
 
-  const query = {};
-  if (department) query.department = department;
+exports.getMySchedule = catchAsync(async (req, res, next) => {
+  const { startDate, endDate } = req.query;
 
-  const doctors = await Doctor.find(query)
-    .populate("user", "firstName lastName email photo")
-    .skip((page - 1) * limit)
-    .limit(limit);
+  const query = {
+    doctor: req.user.id,
+    status: { $in: ["confirmed", "pending"] },
+  };
 
-  const total = await Doctor.countDocuments(query);
+  if (startDate && endDate) {
+    query.date = {
+      $gte: new Date(startDate),
+      $lte: new Date(endDate),
+    };
+  }
+
+  const appointments = await Appointment.find(query)
+    .populate("patient", "firstName lastName photo")
+    .sort("date timeSlot");
 
   res.status(200).json({
     status: "success",
-    results: doctors.length,
-    totalPages: Math.ceil(total / limit),
+    results: appointments.length,
     data: {
-      doctors,
+      appointments,
     },
   });
 });
 
-exports.getDoctor = catchAsync(async (req, res, next) => {
-  const doctor = await Doctor.findById(req.params.id).populate(
-    "user",
-    "firstName lastName email photo"
+exports.setMyAvailability = catchAsync(async (req, res, next) => {
+  const doctor = await Doctor.findOneAndUpdate(
+    { user: req.user.id },
+    { availableSlots: req.body.slots },
+    { new: true, runValidators: true }
   );
 
   if (!doctor) {
-    return next(new AppError("No doctor found with that ID", 404));
+    return next(new AppError("No doctor profile found", 404));
   }
 
   res.status(200).json({
     status: "success",
     data: {
-      doctor,
+      availableSlots: doctor.availableSlots,
     },
   });
 });
 
-exports.createDoctor = catchAsync(async (req, res, next) => {
-  const user = await User.findById(req.user.id);
-  if (!user) {
-    return next(new AppError("No user found with that ID", 404));
+exports.createPrescription = catchAsync(async (req, res, next) => {
+  const appointment = await Appointment.findById(req.params.id);
+
+  if (!appointment) {
+    return next(new AppError("No appointment found with that ID", 404));
   }
 
-  if (user.role !== "doctor") {
+  if (appointment.doctor.toString() !== req.user.id) {
     return next(
-      new AppError("Only users with doctor role can be added as doctors", 400)
+      new AppError("You can only prescribe for your own appointments", 403)
     );
   }
 
-  const doctorData = {
-    user: req.user.id,
-    ...req.body,
-  };
+  const prescription = await Prescription.create({
+    doctor: req.user.id,
+    patient: appointment.patient,
+    appointment: appointment._id,
+    medications: req.body.medications,
+    instructions: req.body.instructions,
+  });
 
-  const doctor = await Doctor.create(doctorData);
+  // Update appointment with prescription
+  appointment.prescription = prescription._id;
+  await appointment.save();
 
   res.status(201).json({
     status: "success",
     data: {
-      doctor,
+      prescription,
     },
   });
 });
 
-exports.updateDoctor = catchAsync(async (req, res, next) => {
-  const doctor = await Doctor.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true,
-  });
+exports.updateMyProfile = catchAsync(async (req, res, next) => {
+  const updateData = {
+    ...req.body,
+    updatedAt: Date.now(),
+  };
+
+  if (req.file) {
+    updateData.photo = `/uploads/doctors/${req.file.filename}`;
+  }
+
+  const doctor = await Doctor.findOneAndUpdate(
+    { user: req.user.id },
+    updateData,
+    { new: true, runValidators: true }
+  ).populate("user", "firstName lastName email photo");
 
   if (!doctor) {
-    return next(new AppError("No doctor found with that ID", 404));
+    return next(new AppError("No doctor profile found", 404));
   }
 
   res.status(200).json({
@@ -89,15 +116,61 @@ exports.updateDoctor = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.deleteDoctor = catchAsync(async (req, res, next) => {
-  const doctor = await Doctor.findByIdAndDelete(req.params.id);
+exports.verifyDoctor = catchAsync(async (req, res, next) => {
+  const doctor = await Doctor.findByIdAndUpdate(
+    req.params.id,
+    {
+      isVerified: true,
+      verifiedAt: Date.now(),
+      verifiedBy: req.user.id,
+    },
+    { new: true, runValidators: true }
+  ).populate("user", "firstName lastName email photo");
 
   if (!doctor) {
     return next(new AppError("No doctor found with that ID", 404));
   }
 
-  res.status(204).json({
+  // Update user role if not already a doctor
+  await User.findByIdAndUpdate(doctor.user, { role: "doctor" });
+
+  res.status(200).json({
     status: "success",
-    data: null,
+    data: {
+      doctor,
+    },
+  });
+});
+
+exports.getDoctorStats = catchAsync(async (req, res, next) => {
+  const stats = await Appointment.aggregate([
+    {
+      $match: { doctor: req.user._id },
+    },
+    {
+      $group: {
+        _id: null,
+        totalAppointments: { $sum: 1 },
+        completed: {
+          $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+        },
+        cancelled: {
+          $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+        },
+        earnings: { $sum: "$fee" },
+      },
+    },
+  ]);
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      stats: stats[0] || {
+        totalAppointments: 0,
+        completed: 0,
+        cancelled: 0,
+        earnings: 0,
+      },
+    },
   });
 });
